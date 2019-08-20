@@ -1,0 +1,11 @@
+Reaction	Formula	Comments
+CLB6PH	cellb6p_c + h2o_c --> g6p_c + glc__D_c	Balanced water
+CLBH	cellb_c + h2o_c --> 2.0 glc__D_c	Balanced water
+GLA	udpgalur_c <=> udpglcur_c	Removed NADH requirement to match doi:10.1104/pp.104.043745 (E. coli genes from GPRs are similar to the plant UDP-galacturonate 4-epimerase)
+GALAMPTSpp	pep_c + galam_p + h_c -> pyr_c + galam6p_c	Updated to acccount for new galam6p formula, adjusted from -2 to -1 form
+ACGAL6PISO	acgal6p_c + h2o_c --> galam6p_c + ac_c	Undocumented reaction, assuming combined spontaneous de-acetylation and isomerization
+ACGAL6PI	acgal6p_c + 2.0 h2o_c --> tag6p__D_c + ac_c + nh4_c	Undocumented reaction, assuming combined spontaneous de-acetylation/de-amination and isomerization
+4H3NPACAM	DELETE	Undocumented reaction recorded as deamidation, needs to be denitration to be balanced
+34PHACTE	1.0 h2o_c + 1.0 34dhphaccoa_c -> 1.0 34dhpha_c + 1.0 coa_c + h_c	Made analagous to 35PHACTE, which is mediated by the same genes and produces an acid (**dhpha) instead of an aldehyde (**dhpac) as was in the original reaction
+GLYOX_2	h2o_c + lgt__S_c --> gthrd_c + h_c + lac__D_c	Removed methylgloxyl byproduct to balance reaction
+CYTK2_2	atp_c + dcmp_c <=> adp_c + dcdp_c	Undocumented reaction that is imbalanced with phosphates, replaced with CYTK2 based on KEGG:K00945 

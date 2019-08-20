@@ -1,0 +1,68 @@
+Metabolite	Imbalance	Charge	Formula	Comments
+mmcoa__R	MMM2	-5	C25H35N7O19P3S	Changed charge, isomerizes into succoa
+salchsx	SALCHS1H	0	C16H21NO11	Changed formula, match protonated form consisted with other Salmochelins in model
+salchs2fe	SALCHS2FEexs	3	C42FeH49N3O26	Changed charge, from Fe3 + salchs2 (neutral)
+salchs4fe	SALCHS4FEexs	3	C42FeH47N3O25	Changed charge, from Fe3 + salchs4 (neutral)
+galam6p	GALAMPTSpp	-1	C6H13NO8P	Changed both, to match dominant (-1) form at physiological pH CHEBI:71674
+cellb6p	CLBptspp	-2	C12H21O14P	Changed charge, from PTS transport of cellb; made analagous to PTS transport of glucose
+chit6p	CHITOBpts	-2	C16H27N2O14P	Changed charge, from PTS transport of chitob; made analagous to PTS transport of glucose
+salcn6p	SALCptspp	-2	C13H17O10P	Changed both, from PTS transport of salcn; made analagous to PTS transport of glucose
+acgal6p	ACGALptspp	-2	C8H14NO9P	Changed both, from PTS transport of acgal; made analagous to PTS transport of glucose
+tag6p__D	GALAM6PISO	-2	C6H11O9P	Changed charge, match form in iML1515
+ah6p__D	AH6PI	-2	C6H11O9P	Changed charge, isomerizes into f6p
+srb1p	SBDH	-2	C6H11O9P	Changed charge, sugar mono-phosphates typically -2
+udpgalur	GLA	-3	C15H19N2O18P2	Changed both, isomerizes into udpglcur
+2d5kg	D5KGI	-1	C6H9O6	Changed both, isomerizes into d5kg, no previous information 
+3ntym	3NTYROXDApp	0	C8H10N2O3	Changed formula to reflect RHEA:35107 and doi:10.1128/JB.00508-08
+4h3npacald	4H3NALDD	-1	C8H6NO4	Changed both to reflect RHEA:35151
+4h3npac	4H3NALDD	-2	C8H5NO5	Changed both to reflect RHEA:35151
+3dhphaccoa	3PHACOAOR	-4	C29H40N7O19P3S	Changed charge to balance and inherit charge from phaccoa
+34dhphaccoa	34PHACTE	-4	C29H38N7O19P3S	Changed both to match ModelSEED:cpd22085
+35dhphaccoa	35PHACTE	-4	C29H38N7O19P3S	Changed both to be an isomer of 34dhphaccoa
+3hphaccoa	3PHACTE	-4	C29H38N7O18P3S	Changed both to match ModelSEED:cpd22017
+2hphaccoa	2PHACTE	-4	C29H38N7O18P3S	Changed both to be an isomer of 3hphaccoa
+frmd	-	0	CH3NO	Set charge to 0 to match BiGG, reference table has no charge
+raffin	-	0	C18H32O16	Set charge to 0 to match BiGG, reference table has no charge
+nicrns	-	0	C11H13NO6	Set charge to 0 to match BiGG, reference table has no charge
+2ommb	-	0	C48H72O3	Set charge to 0 to match BiGG, reference table has no charge
+2ombz	-	0	C47H70O3	Set charge to 0 to match BiGG, reference table has no charge
+lpam	-	0	C8H15NOS2	Set charge to 0 to match BiGG, reference table has no charge
+dhlam	-	0	C8H17NOS2	Set charge to 0 to match BiGG, reference table has no charge
+5cohe	OPETDC	-3	C8H5O7	Override charge, reference table incorrectly has 0
+2hh24dd	OPETDC	-2	C7H6O5	Override charge, reference table incorrectly has 0
+5cmhmsa	CMCMSAD	-2	C8H6O6	Override charge, reference table incorrectly has 0
+5cmhm	CMCMSAD	-3	C8H5O7	Override charge, reference table incorrectly has 0
+24dhhed	DHEDAA	-2	C7H8O6	Override charge, reference table incorrectly has 0
+d5kg	D5KGI	-1	C6H9O6	Override charge, reference table incorrectly has 0
+adocblp	ADOCBLPS	-2	C72H99CoN18O20P2	Override charge, reference table incorrectly has 0
+4h2kpi	4H2KPILY	-2	C7H8O6	Override charge, reference table incorrectly has 0
+2ohed	HHDDI	-2	C7H6O5	Override charge, reference table incorrectly has 0
+alatrna	ALATRS	1	C3H6NOR	Override charge, reference table inconsistent with iJO1366
+argtrna	ARGTRS	2	C6H14N4OR	Override charge, reference table inconsistent with iJO1366
+asntrna	ASNTRS	1	C14H24N2O12PR2	Override charge, reference table inconsistent with iJO1366
+cystrna	CYSTRS	1	C3H6NOSR	Override charge, reference table inconsistent with iJO1366
+glntrna	GLNTRS	1	C5H9N2O2R	Override charge, reference table inconsistent with iJO1366
+glytrna	GLYTRS	1	C2H4NOR	Override charge, reference table inconsistent with iJO1366
+histrna	HISTRS	1	C6H8N3OR	Override charge, reference table inconsistent with iJO1366
+iletrna	ILETRS	1	C6H12NOR	Override charge, reference table inconsistent with iJO1366
+leutrna	LEUTRS	1	C6H12NOR	Override charge, reference table inconsistent with iJO1366
+lystrna	LYSTRS	2	C6H14N2OR	Override charge, reference table inconsistent with iJO1366
+mettrna	FMETTRS	1	C5H10NOSR	Override charge, reference table inconsistent with iJO1366
+phetrna	PHETRS	1	C9H10NOR	Override charge, reference table inconsistent with iJO1366
+protrna	PROTRS	1	C5H8NOR	Override charge, reference table inconsistent with iJO1366
+sertrna	SERTRS	1	C3H6NO2R	Override charge, reference table inconsistent with iJO1366
+thrtrna	THRTRS	1	C4H8NO2R	Override charge, reference table inconsistent with iJO1366
+trptrna	TRPTRS	1	C11H11N2OR	Override charge, reference table inconsistent with iJO1366
+tyrtrna	TYRTRS	1	C9H10NO2R	Override charge, reference table inconsistent with iJO1366
+valtrna	VALTRS	1	C5H10NOR	Override charge, reference table inconsistent with iJO1366
+sectrna	SELCYSS	1	C3H6NOSeR	Override charge, reference table inconsistent with iJO1366
+forglu	IZPN	-2	C6H8N2O4	Override charge, reference table has -1, which is for a protonated form
+abt__D	ABTDG	0	C5H12O5	Updated both, differently labeled in reference table as abt-D
+arab__D	DARBt3ipp	0	C5H10O5	Updated both, differently labeled in reference table as arab-D
+tag1p__D	TAG1PK	-2	C6H11O9P	Updated both, differently labeled in reference table as tag1p-D
+cmpacna	ACNMCT	-2	C20H29N4O16P	Updated both, differently labeled in reference table as cmp-nate
+sertrna_sec	SELCYSS	1	C3H6NO2R	Updated both, differently labeled in reference table as sertrna_LSQBKT_sec_RSQBKT
+scys__L	SLCYSS	-1	C3H6NO5S2	Updated both, differently labeled in reference table as slcys
+copre2	DSCLCOCH	-7	C42H39CoN4O16	Updated both, differently labeled in reference table as codscl2
+2ameph	-	-1	C2H7NO3P	Updated both, differently labeled in reference table as AEP (adjusted charge to match BiGG)
+lipidA_core_e	-	0	C68H126N2O23P2	Updated both, differently labeled in reference table as lipidA_core
