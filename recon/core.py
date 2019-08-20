@@ -6,24 +6,69 @@ Created on Mon Jul 22 14:36:29 2019
 @author: jhyun95
 """
 
+import os, subprocess
 
-def reconstruct_with_cdhit(seq_fasta, work_dir=None, ref_dir='reference/'):
+module_path = os.path.abspath(os.path.dirname(__file__)) + '/'
+REFERENCE_GPR_PATH = module_path + 'data/pan-ecoli-gpr.csv' # path to GPR table  
+
+BLACKLIST_PROTEINS = ['AYC08180.1','YP_009518752.1'] # ignore alignments to these proteins
+BASELINE_GENES = ['s0001'] # genes to include in all models
+BASELINE_STRAIN = 'NC000913.3' # start with this genome/model during reconstruction
+
+
+def reconstruct_with_cdhit(seq_fasta, work_dir=None, ref_dir='reference/', 
+    extra_cdhit_args=['-c', 0.8, '-aL', 0.8, '-T', 10, '-d', 0]):
     '''
     Attempts a reconstruction with CD-Hit given a set of coding sequences 
     '''
 
-    ''' Prepare output directory'''
-    models_dir = ref_dir + 'ref_models/'
-    genomes_dir = ref_dir + 'ref_genomes/'
-    if work_dir is None:
-        head, tail = os.path.split(seq_fasta)
-        name = '.'.join(tail.split('.')[:-1])
+    ''' Prepare file paths and output directory '''
+    cdhit_ref_dir = (ref_dir + '/cdhit/').replace('//','/')
+    cdhit_ref_db = cdhit_ref_dir + 'pan-ecoli-cdhit.faa'
+    head, tail = os.path.split(seq_fasta)
+    name = '.'.join(tail.split('.')[:-1])
+    if work_dir is None:    
         work_dir = name + '_recon/'
     if not os.path.isdir(work_dir):
         os.mkdir(work_dir)
+    work_dir = (work_dir + '/').replace('//','/')
+    cdhit_temp = work_dir + name + '_cdhit_temp.faa'
+    cdhit_final_out = work_dir + name + '_cdhit_merged.faa'
 
-    ''' Combine query fasta and reference fastas '''
-    
+    ''' Run CD-Hit incremental clustering against reference clusters, adapted from
+        https://github.com/weizhongli/cdhit/wiki/3.-User's-Guide#CDHIT
+        (skipping some steps, don't need preserve clusters not involving reference genes) '''
+
+    # 1) Incremental clustering against reference -> cdhit_temp
+    cdhit_args = ['cd-hit-2d', '-i', cdhit_ref_db, '-i2', seq_fasta, '-o', cdhit_temp]
+    cdhit_args += map(str,extra_cdhit_args)
+    print 'RUNNING:', cdhit_args
+    print subprocess.check_output(cdhit_args)
+
+    # 2) Re-clustering -> cdhit_out2 (SKIP: Don't need non-co-clustered genes)
+    # cdhit_args = ['cd-hit', '-i', cdhit_out1, '-o', cdhit_out2]
+    # cdhit_args += map(str,extra_cdhit_args)
+    # print 'RUNNING:', cdhit_args
+    # print subprocess.check_output(cdhit_args)
+
+    # 3) Merge clusters -> cdhit_out3 / cdhit_final_out
+    cdhit_args = ['clstr_merge.pl', cdhit_ref_db + '.clstr', cdhit_temp + '.clstr']
+    print 'RUNNING:', cdhit_args
+    with open(cdhit_final_out + '.clstr', 'w+') as f:
+        subprocess.call(cdhit_args, stdout=f)
+
+    # 4) Build final cluster set -> cdhit_final_out (SKIP: Don't need non-co-clustered genes)
+    # cdhit_args = ['cat', cdhit_out3 + '.clstr', cdhit_out2 + '.clstr']
+    # print 'RUNNING:', cdhit_args
+    # with open(cdhit_final_out + '.clstr', 'w+') as f:
+    #     subprocess.call(cdhit_args, stdout=f) 
+
+    ''' Identify co-clustered reference genes '''
+    # TODO
+
+
+    ''' Reconstruct from reference genes '''
+    # TODO
 
 
 def reconstruct_with_blast(seq_fasta):
