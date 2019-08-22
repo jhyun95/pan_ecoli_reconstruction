@@ -6,14 +6,15 @@ Created on Mon Jul 22 14:36:29 2019
 @author: jhyun95
 """
 
-import os, subprocess
-
-module_path = os.path.abspath(os.path.dirname(__file__)) + '/'
-REFERENCE_GPR_PATH = module_path + 'data/pan-ecoli-gpr.csv' # path to GPR table  
+import os, subprocess, simplejson
+import numpy as np
+import numexpr as ne
+import pandas as pd
+import cobra
 
 BLACKLIST_PROTEINS = ['AYC08180.1','YP_009518752.1'] # ignore alignments to these proteins
 BASELINE_GENES = ['s0001'] # genes to include in all models
-BASELINE_STRAIN = 'NC000913.3' # start with this genome/model during reconstruction
+BASELINE_STRAIN = ('NC000913.3','iML1515') # start with this genome/model during reconstruction
 
 
 def reconstruct_with_cdhit(seq_fasta, work_dir=None, ref_dir='reference/', 
@@ -23,17 +24,18 @@ def reconstruct_with_cdhit(seq_fasta, work_dir=None, ref_dir='reference/',
     '''
 
     ''' Prepare file paths and output directory '''
+    label_ref_file = (ref_dir + '/ref_labels.tsv').replace('//','/')
     cdhit_ref_dir = (ref_dir + '/cdhit/').replace('//','/')
     cdhit_ref_db = cdhit_ref_dir + 'pan-ecoli-cdhit.faa'
     head, tail = os.path.split(seq_fasta)
-    name = '.'.join(tail.split('.')[:-1])
+    query_name = '.'.join(tail.split('.')[:-1])
     if work_dir is None:    
-        work_dir = name + '_recon/'
+        work_dir = query_name + '_recon/'
     if not os.path.isdir(work_dir):
         os.mkdir(work_dir)
     work_dir = (work_dir + '/').replace('//','/')
-    cdhit_temp = work_dir + name + '_cdhit_temp.faa'
-    cdhit_final_out = work_dir + name + '_cdhit_merged.faa'
+    cdhit_temp = work_dir + query_name + '_cdhit_temp.faa'
+    cdhit_final_out = work_dir + query_name + '_cdhit_merged.faa'
 
     ''' Run CD-Hit incremental clustering against reference clusters, adapted from
         https://github.com/weizhongli/cdhit/wiki/3.-User's-Guide#CDHIT
@@ -63,12 +65,169 @@ def reconstruct_with_cdhit(seq_fasta, work_dir=None, ref_dir='reference/',
     # with open(cdhit_final_out + '.clstr', 'w+') as f:
     #     subprocess.call(cdhit_args, stdout=f) 
 
+    # 5) Delete temporary files
+    subprocess.call(['rm', cdhit_temp])
+    subprocess.call(['rm', cdhit_temp + '.clstr'])
+
+    ''' Load label table '''
+    header_to_locus = {}
+    with open(label_ref_file, 'r') as f:
+        for line in f:
+            name, label = line.split()
+            header_to_locus[name] = label.split('|')[1]
+
     ''' Identify co-clustered reference genes '''
-    # TODO
+    #query_to_reference = {} # match query to sets of labels for co-clustered reference genes
+    reference_to_query = {} # match reference gene to co-clustered nearest query gene
+    current_cluster = set(); current_query = ''; current_pid = 0.0
+    with open(cdhit_final_out + '.clstr', 'r') as f:
+        for line in f:
+            if line[:8] == '>Cluster': # starting a new cluster
+                if len(current_query) > 0: # cluster contains a query sequence
+                    for ref_gene in current_cluster:
+                        reference_to_query[ref_gene] = current_query
+                    # query_to_reference[current_query] = current_cluster
+                current_cluster = set(); current_query = '' # reset cluster
+            else: # continuing existing cluster 
+                entries = line.split()
+                length = int(entries[1].split('aa')[0])
+                name = entries[2][1:-3] # drop '>' and '...'
+                if name in header_to_locus: # if reference gene
+                    current_cluster.add(header_to_locus[name])
+                else: # if query gene
+                    pid = float(entries[-1][:-1]) # perecent identity to cluster representative sequence
+                    if current_query != '': # if multiple queries in same cluster, choose higher PID
+                        if current_pid < pid: # if new hit has higher percent, overwrite
+                            current_query = name; current_pid = pid
+                    else: # first query gene in this cluster
+                        current_query = name; current_pid = pid
+    print '------------------------------------------------------------\n'
+    print '# of query sequences co-clustered with reference genes:', len(set(reference_to_query.values()))
+    # print '# of reference genes co-clustered with query sequences:', len()
 
+    ''' Initialize the model as a subset of the base strain '''
+    models_dir = (ref_dir + '/ref_models/').replace('//','/')
+    ref_model_index = 1
+    total_ref_models = len(filter(lambda f: f[-5:] == '.json', os.listdir(models_dir)))
+    label = str(ref_model_index) + '/' + str(total_ref_models)
 
-    ''' Reconstruct from reference genes '''
-    # TODO
+    print '\n' + label + ': Initializing with hits to', BASELINE_STRAIN[1]
+    base_model = models_dir + BASELINE_STRAIN[1] + '.json'
+    model = cobra.io.load_json_model(base_model)
+    model.name = query_name
+    base_model_geneIDs = map(lambda g: g.id, model.genes)
+    missing_genes = filter(lambda g: not g in reference_to_query, base_model_geneIDs)
+    for gene in BASELINE_GENES: # don't delete baseline genes
+        missing_genes.remove(gene)
+    cobra.manipulation.delete.remove_genes(model, missing_genes) # hard-delete missing genes
+    for gene in model.genes: # add note about matched gene
+        if gene.id in reference_to_query:
+            gene.notes['match'] = reference_to_query[gene.id]
+    print '\tGenes:', len(model.genes)
+    print '\tReactions:', len(model.reactions)
+    print '\tMetabolites:', len(model.metabolites)
+
+    ''' Update model with hits to other models '''
+    for model_file in os.listdir(models_dir):
+        ''' For each model that is not the baseline strain '''
+        if model_file[-5:] == '.json' and not BASELINE_STRAIN[1] in model_file:
+            ''' Load with simplejson not cobrapy for better performance '''
+            model_name = model_file[:-5]
+            model_path = models_dir + model_file
+            ref_model_index += 1
+            label = str(ref_model_index) + '/' + str(total_ref_models)
+            print label + ': Updating with hits to', model_name
+            with open(model_path, 'r') as model_json_file:
+                model_json = simplejson.load(model_json_file)
+
+            ''' Build gene presence/absence table '''
+            gene_presence = {} # maps locus tags to True/False based on presence in query 
+            for gene in model_json['genes']:
+                gene_presence[gene['id']] = gene['id'] in reference_to_query
+            for gene in BASELINE_GENES:
+                gene_presence[gene] = True
+
+            ''' Map gene/metabolite information to IDs '''
+            model_gene_dumps = {}; model_met_dumps = {}
+            for gene in model_json['genes']:
+                model_gene_dumps[gene['id']] = gene
+            for met in model_json['metabolites']:
+                model_met_dumps[met['id']] = met
+
+            ''' Check reactions not in model with satisfied GPRs '''
+            possible_reactions = 0; added_reactions = 0
+            defunct_genes = [] # genes in a GPR of a new reaction but not present in strain
+            for reaction in model_json['reactions']:
+                not_present = not (reaction['id'] in model.reactions) # only new reactions
+                not_biomass = not ('BIOMASS' in reaction['id']) # do not overwrite iML1515 biomass
+                if not_present and not_biomass: 
+                    possible_reactions += 1
+                    gpr = reaction['gene_reaction_rule']
+                    if len(gpr) == 0: # no GPR, spontaneous
+                        gpr_state = True
+                    else: # yes GPR, evaluate statement
+                        gpr_eval = gpr.replace('or','|').replace('and','&')
+                        #print gpr_eval
+                        gpr_state = ne.evaluate(gpr_eval, local_dict=gene_presence)
+                    added_reactions += int(gpr_state)
+
+                    ''' Add a present reaction from raw json data '''
+                    if gpr_state: # if reaction is viable, add necessary genes, metabolites, and reaction
+                        # print '\tAdding reaction:', reaction['id']
+                        
+                        ''' Add missing metabolites from new reaction '''
+                        new_metabolites = []
+                        for metID in reaction['metabolites']:
+                            met = model_met_dumps[metID]
+                            if not met['id'] in model.metabolites:
+                                new_met = cobra.core.Metabolite(
+                                    id=met['id'],
+                                    formula=met['formula'] if 'formula' in met else None,
+                                    name=met['name'] if 'name' in met else '',
+                                    charge=int(met['charge']) if 'charge' in met else None,
+                                    compartment=met['compartment'] if 'compartment' in met else None)
+                                new_met.notes = met['notes']
+                                new_metabolites.append(new_met)
+                                # print '\tAdding metabolite:', met['id']
+                        if len(new_metabolites) > 0:
+                            model.add_metabolites(new_metabolites)
+
+                        ''' Add the new reaction to the model '''
+                        new_rxn = cobra.core.Reaction(
+                            id=reaction['id'],
+                            name=reaction['name'] if 'name' in reaction else '',
+                            subsystem=reaction['subsystem'] if 'subsystem' in reaction else '',
+                            lower_bound=float(reaction['lower_bound']) if 'lower_bound' in reaction else -1000.0,
+                            upper_bound=float(reaction['upper_bound']) if 'upper_bound' in reaction else 1000.0)
+                        new_rxn.notes = reaction['notes']
+                        new_rxn.gene_reaction_rule = reaction['gene_reaction_rule']
+                        model.add_reactions([new_rxn])
+                        new_rxn.add_metabolites(reaction['metabolites'])
+
+                        ''' Annotate newly added genes '''
+                        gpr_genes = gpr + ''
+                        for c in ['(',')','or','and']: # remove GPR operators to get just genes
+                            gpr_genes = gpr_genes.replace(c,' ')
+                        gpr_genes = gpr_genes.split() # list of genes in GPR
+                        for geneID in gpr_genes:
+                            gene = model.genes.get_by_id(geneID)
+                            gene_dump = model_gene_dumps[geneID]
+                            gene.notes = gene_dump['notes']
+                            gene.name = gene_dump['name'] if 'name' in gene_dump else ''
+                            if geneID in reference_to_query: # gene is present in strain
+                                gene.notes['match'] = reference_to_query[geneID]
+                            elif not geneID in BASELINE_GENES: # gene is not present
+                                defunct_genes.append(geneID)
+
+            cobra.manipulation.delete.remove_genes(model, defunct_genes) # hard-delete missing geness
+            print model_name + ': Added', added_reactions, 'of', possible_reactions,
+            print 'possible new reactions.'
+            print '\tGenes:', len(model.genes)
+            print '\tReactions:', len(model.reactions)
+            print '\tMetabolites:', len(model.metabolites)
+
+    cobra.io.save_json_model(model, work_dir + query_name + '.json')
+    return model
 
 
 def reconstruct_with_blast(seq_fasta):
