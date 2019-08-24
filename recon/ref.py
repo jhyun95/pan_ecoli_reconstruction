@@ -13,6 +13,7 @@ download_reference_data()
 create_label_table() 
 create_non_redundant_pangenome()
 create_cdhit_reference_database() # if using CD-Hit reconstruction
+extract_reference_data_dna() # if intending on analyzing upstream DNA
 
 """
 
@@ -29,6 +30,42 @@ FIX_METABOLITES_DB_PATH = module_path + 'data/pan-ecoli-met.tsv' # path to E. cl
 WHITELIST_REACTIONS = ['HEPKB2', 'HEPKA2', 'GALR1TRA2'] # reactions to ignore when balancing 
 WHITELIST_METABOLITES = ['colipaOA'] # metabolites to ignore when fixing metabolite formulas
 
+def download_reference_data_dna(ref_dir='reference/', overwrite=True):
+    '''
+    Checks whether reference model DNA has been downloaded (specifically,
+    the full nucleotide fasta). If missing, downloads from NCBI. Intended 
+    to be used for extracting upstream DNA sequences of corresponding proteins. 
+
+    Parameters
+    ----------
+    ref_dir : str 
+        Directory to store genomes. Will create subdirectory "ref_genomes_dna/"
+    overwrite : bool
+        If true, re-downloads genomes already present (default False)
+    '''
+
+    df_rec = pd.read_csv(REFERENCE_LIST_PATH, index_col=0)
+
+    ''' Check for/create output directories '''
+    dna_dir = (ref_dir + '/ref_genomes_dna/').replace('//','/')
+    if not os.path.isdir(ref_dir):
+        os.mkdir(ref_dir)
+    if not os.path.isdir(dna_dir):
+        os.mkdir(dna_dir)
+
+    ''' Downloading genome DNA and feature tables '''
+    for strain in df_rec.index:
+        ncbi = df_rec.loc[strain,'NCBI Full']
+        ncbi_dna_url = 'https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?'
+        ncbi_dna_url += 'db=nucleotide&id=' + ncbi + '&rettype=fasta'
+        ncbi_dna_out = dna_dir + ncbi + '.fna'
+        if not os.path.exists(ncbi_dna_out) or overwrite:
+            print 'Downloading full genome DNA', ncbi, 'from', ncbi_dna_url
+            urllib.urlretrieve(ncbi_dna_url, filename=ncbi_dna_out)
+        else: 
+            print 'Full genome DNA', ncbi, 'already downloaded'
+
+
 def download_reference_data(ref_dir='reference/', overwrite=False, repair_downloaded_models=True):
     ''' 
     Checks whether reference models and their corresponding genomes
@@ -39,8 +76,8 @@ def download_reference_data(ref_dir='reference/', overwrite=False, repair_downlo
     Parameters
     ----------
     ref_dir : str 
-        Directory to store genomes and models. Will create two subdirectories 
-        "ref_genomes/" and "ref_models/" in this directory.
+        Directory to store genomes and models. Will create subdirectories 
+        "ref_genomes/" and "ref_models/" in this directory. 
     overwrite : bool
         If true, re-downloads models and genomes already present (default False)
     repair_downloaded_models : bool
@@ -74,11 +111,14 @@ def download_reference_data(ref_dir='reference/', overwrite=False, repair_downlo
             bigg_url = 'http://bigg.ucsd.edu/static/models/' + bigg + '.json'
             bigg_out = models_dir + bigg + '.json'
 
+            ''' Downloading NCBI protein features as FAA '''
             if not os.path.exists(ncbi_out) or overwrite:
                 print 'Downloading genome', ncbi, 'from', ncbi_url
                 urllib.urlretrieve(ncbi_url, filename=ncbi_out)
             else: 
                 print 'Genome', ncbi, 'already downloaded'
+
+            ''' Downloading BiGG models as json '''
             if not os.path.exists(bigg_out) or overwrite:
                 print 'Downloading model', bigg, 'from', bigg_url
                 urllib.urlretrieve(bigg_url, filename=bigg_out)
@@ -103,6 +143,80 @@ def download_reference_data(ref_dir='reference/', overwrite=False, repair_downlo
 
     ''' Merge into a non-redundant sequence database '''
     create_non_redundant_pangenome(ref_dir)
+
+
+def get_upstream_sequences(ref_dir='reference/', limits=(-50,3)):
+    ''' 
+    Gets non-coding upstream DNA sequences for all protein coding features 
+
+    Parameters
+    ----------
+    ref_dir : str 
+        Directory to look for protein features and full genome DNA. Will
+        also create subdirectory "ref_upstream" with upstream sequences 
+    limits : tuple
+        Length of upstream region to extract, formatted (-X,Y). Will extract X 
+        upstream bases (up to but excluding first base of start codon) and Y coding 
+        bases (including first base of start codon), for total length of X+Y bases.
+        (default (-50,3))
+    '''
+
+    genomes_dir = (ref_dir + '/ref_genomes/').replace('//','/') # protein sequences, .faa files
+    dna_dir = (ref_dir + '/ref_genomes_dna/').replace('//','/') # full genomic DNA, .fna files
+    upstream_dir = (ref_dir + '/ref_upstream/').replace('//','/') # protein DNA upstream, fna files
+    if not os.path.isdir(upstream_dir):
+        os.mkdir(upstream_dir)
+
+    complement = {'A': 'T', 'C': 'G', 'G': 'C', 'T': 'A', 
+                  'W': 'W', 'S': 'S', 'R': 'Y', 'Y': 'R', 
+                  'M': 'K', 'K': 'M', 'N': 'N'}
+    reverse_complement = lambda s: (''.join([complement[base] for base in list(s)]))[::-1]
+    upstream_label = 'upstream' + str(limits).replace(' ','')
+    for genome_file in os.listdir(genomes_dir):
+        strain = genome_file[:-4]
+        dna_path = dna_dir + strain + '.fna'
+        genome_path = genomes_dir + genome_file
+        if genome_file[-4:] == '.faa' and os.path.exists(dna_path): # if faa/fna pair found
+            print 'Extracting upstream sequences for', strain
+            ''' Load genome DNA, assuming the NCBI genomes are a single contig '''
+            genome = ''
+            with open(dna_path, 'r') as f_dna:
+                for line in f_dna:
+                    if not '>' in line:
+                        genome += line.strip()
+
+            ''' Extract upstream sequence for each protein sequence '''
+            upstream_out = upstream_dir + strain + '_upstream.fna'
+            with open(genome_path, 'r') as f_in:
+                with open(upstream_out, 'w+') as f_out:
+                    for line in f_in:
+                        if line[0] == '>': # header line
+                            raw_name, parameters, label = process_header(line)
+                            full_label = '>' + label + '|' + upstream_label
+                            pseudo = 'pseudo' in parameters and parameters['pseudo'] == 'true'
+                            if 'location' in parameters and not pseudo:
+                                location = parameters['location']
+                                if 'join' in location: # rare, frameshift/slippage case
+                                    print '\tJOIN:', location, '->', 
+                                    location = location.replace('join(','').replace('))',')')
+                                    location = location.replace(',','..')
+                                    tmp = location.split('..')
+                                    location = '..'.join((tmp[0], tmp[-1]))
+                                    location = location.replace(')','') if not 'complement' in location else location
+                                    print location
+                                if '>' in location or '<' in location: # rare, undefined CDS limits
+                                    print '\tWARN (ignoring >/<):', raw_name, location
+                                    location = location.replace('>','').replace('<','')
+                                if 'complement' in location: # negative strand
+                                    location = location.replace('complement(','').replace(')','')
+                                    start, end = map(int, location.split('..'))
+                                    upstream = genome[end-limits[1]:end-limits[0]]
+                                    upstream = reverse_complement(upstream)
+                                else: # positive strand
+                                    start, end = map(int, location.split('..'))
+                                    upstream = genome[start+limits[0]-1:start+limits[1]-1]
+                                f_out.write(full_label + '\n')
+                                f_out.write(upstream + '\n')
 
 
 def create_label_table(ref_dir='reference/'):
