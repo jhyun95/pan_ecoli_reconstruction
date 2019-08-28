@@ -6,7 +6,7 @@ Created on Mon Jul 22 14:36:29 2019
 @author: jhyun95
 """
 
-import os, subprocess, simplejson
+import os, subprocess, simplejson, time
 import numpy as np
 import numexpr as ne
 import pandas as pd
@@ -23,7 +23,14 @@ def reconstruct_with_cdhit(seq_fasta, work_dir=None, ref_dir='reference/',
     Attempts a reconstruction with CD-Hit given a set of coding sequences 
     '''
 
+    ''' Timing benchmarks '''
+    time_cdhit_run = 0 # time for CD-Hit run 
+    time_cdhit_parse = 0 # time for CD-Hit co-cluster parsing
+    time_base = 0 # time for base reference model copying/initialization
+    time_expand = 0 # time for integration of other reference models
+
     ''' Prepare file paths and output directory '''
+    time_cdhit_run = time.time()
     label_ref_file = (ref_dir + '/ref_labels.tsv').replace('//','/')
     cdhit_ref_dir = (ref_dir + '/cdhit/').replace('//','/')
     cdhit_ref_db = cdhit_ref_dir + 'pan-ecoli-cdhit.faa'
@@ -68,8 +75,10 @@ def reconstruct_with_cdhit(seq_fasta, work_dir=None, ref_dir='reference/',
     # 5) Delete temporary files
     subprocess.call(['rm', cdhit_temp])
     subprocess.call(['rm', cdhit_temp + '.clstr'])
+    time_cdhit_run = time.time() - time_cdhit_run
 
     ''' Load label table '''
+    time_cdhit_parse = time.time()
     header_to_locus = {}
     with open(label_ref_file, 'r') as f:
         for line in f:
@@ -103,9 +112,10 @@ def reconstruct_with_cdhit(seq_fasta, work_dir=None, ref_dir='reference/',
                         current_query = name; current_pid = pid
     print '------------------------------------------------------------\n'
     print '# of query sequences co-clustered with reference genes:', len(set(reference_to_query.values()))
-    # print '# of reference genes co-clustered with query sequences:', len()
+    time_cdhit_parse = time.time() - time_cdhit_parse
 
     ''' Initialize the model as a subset of the base strain '''
+    time_base = time.time()
     models_dir = (ref_dir + '/ref_models/').replace('//','/')
     ref_model_index = 1
     total_ref_models = len(filter(lambda f: f[-5:] == '.json', os.listdir(models_dir)))
@@ -126,8 +136,10 @@ def reconstruct_with_cdhit(seq_fasta, work_dir=None, ref_dir='reference/',
     print '\tGenes:', len(model.genes)
     print '\tReactions:', len(model.reactions)
     print '\tMetabolites:', len(model.metabolites)
+    time_base = time.time() - time_base
 
     ''' Update model with hits to other models '''
+    time_expand = time.time()
     for model_file in os.listdir(models_dir):
         ''' For each model that is not the baseline strain '''
         if model_file[-5:] == '.json' and not BASELINE_STRAIN[1] in model_file:
@@ -165,16 +177,29 @@ def reconstruct_with_cdhit(seq_fasta, work_dir=None, ref_dir='reference/',
                     gpr = reaction['gene_reaction_rule']
                     if len(gpr) == 0: # no GPR, spontaneous
                         gpr_state = True
-                    else: # yes GPR, evaluate statement
-                        gpr_eval = gpr.replace('or','|').replace('and','&')
-                        #print gpr_eval
-                        gpr_state = ne.evaluate(gpr_eval, local_dict=gene_presence)
+                    else: # yes GPR, attempt to evaluate statement
+                        ''' Format GPR for numexpr and extract relevant genes '''
+                        gpr_eval = gpr.replace(' or ',' | ').replace(' and ',' & ')
+                        gpr_genes = gpr_eval + ''
+                        for op in ['(', ')', '|', '&']:
+                            gpr_genes = gpr_eval.replace(op ,' ')
+                        gpr_genes = gpr_genes.split()
+
+                        ''' If GPR contains any unknown genes (i.e. not mapped to locus tags)
+                            assume they are not present in the strain '''
+                        for gpr_gene in gpr_genes:
+                            if not gpr_gene in gene_presence:
+                                gene_presence[gpr_gene] = False
+
+                        ''' Evaluate the GPR statement '''
+                        try:
+                            gpr_state = ne.evaluate(gpr_eval, local_dict=gene_presence)
+                        except KeyError:
+                            print 'WARNING: Could not resolve GPR', gpr_eval, gpr_genes
                     added_reactions += int(gpr_state)
 
                     ''' Add a present reaction from raw json data '''
                     if gpr_state: # if reaction is viable, add necessary genes, metabolites, and reaction
-                        # print '\tAdding reaction:', reaction['id']
-                        
                         ''' Add missing metabolites from new reaction '''
                         new_metabolites = []
                         for metID in reaction['metabolites']:
@@ -188,7 +213,6 @@ def reconstruct_with_cdhit(seq_fasta, work_dir=None, ref_dir='reference/',
                                     compartment=met['compartment'] if 'compartment' in met else None)
                                 new_met.notes = met['notes']
                                 new_metabolites.append(new_met)
-                                # print '\tAdding metabolite:', met['id']
                         if len(new_metabolites) > 0:
                             model.add_metabolites(new_metabolites)
 
@@ -222,9 +246,19 @@ def reconstruct_with_cdhit(seq_fasta, work_dir=None, ref_dir='reference/',
             cobra.manipulation.delete.remove_genes(model, defunct_genes) # hard-delete missing geness
             print model_name + ': Added', added_reactions, 'of', possible_reactions,
             print 'possible new reactions.'
-            print '\tGenes:', len(model.genes)
-            print '\tReactions:', len(model.reactions)
-            print '\tMetabolites:', len(model.metabolites)
+            ''' TODO: Try adding models and reactions all at once? '''
+
+    time_expand = time.time() - time_expand
+    print 'Final Model:'
+    print '\tGenes:', len(model.genes)
+    print '\tReactions:', len(model.reactions)
+    print '\tMetabolites:', len(model.metabolites)
+
+    print '\nRunning times:'
+    print '\tCD-Hit run:', round(time_cdhit_run,3)
+    print '\tCD-Hit parse:', round(time_cdhit_parse,3)
+    print '\tCopying iML1515 hits:', round(time_base,3)
+    print '\tIntegrating other hits:', round(time_expand,3)
 
     cobra.io.save_json_model(model, work_dir + query_name + '.json')
     return model

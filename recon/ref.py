@@ -13,10 +13,12 @@ download_reference_data()
 create_label_table() 
 create_non_redundant_pangenome()
 create_cdhit_reference_database() # if using CD-Hit reconstruction
-extract_reference_data_dna() # if intending on analyzing upstream DNA
+download_reference_data_dna() # if intending on analyzing upstream DNA
+get_upstream_sequences() # if intending on analyzing upstream DNA
 
 """
 
+from utils import process_header
 import os, urllib, subprocess
 import pandas as pd
 import cobra
@@ -148,6 +150,7 @@ def download_reference_data(ref_dir='reference/', overwrite=False, repair_downlo
 def get_upstream_sequences(ref_dir='reference/', limits=(-50,3)):
     ''' 
     Gets non-coding upstream DNA sequences for all protein coding features 
+    for the reference sequences.
 
     Parameters
     ----------
@@ -348,26 +351,6 @@ def create_non_redundant_pangenome(ref_dir='reference/', delete_redundant=False)
     df_locus = pd.DataFrame.from_dict(data=locus_map, orient='index', columns=['locus_tags'])
     df_locus = df_locus.reindex(entry_order, axis='index')
     df_locus.to_csv(locus_table_out, sep='\t')
-
-
-def process_header(header):
-    ''' From an NCBI sequence header, extracts the raw name, annotations, and label
-        of the form <strain>|<locus_tag>|<protein_id> '''
-    raw_name = header.split()[0][1:]
-    strain_name = header.split('_prot_')[0][5:]
-    parameters = {}
-    for annotation in header.split()[1:]:
-        if '=' in annotation:
-            annot_split = annotation.strip()[1:-1].split('=')
-            if len(annot_split) == 2:
-                param, value = annot_split
-                parameters[param] = value
-    locus_tag = parameters['locus_tag'] if 'locus_tag' in parameters else 'unknown'
-    protein_id = parameters['protein_id'] if 'protein_id' in parameters else 'unknown'
-    if locus_tag == 'unknown' and 'gene' in parameters and strain_name == 'BA000007.2':
-        locus_tag = parameters['gene']
-    label = strain_name + '|' + locus_tag + '|' + protein_id
-    return raw_name, parameters, label
 
 
 def check_sequence_mapping(ref_dir='reference/'):
