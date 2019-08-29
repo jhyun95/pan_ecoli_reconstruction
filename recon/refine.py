@@ -17,8 +17,17 @@ FREE_METABOLITES = ['o2', 'nh4', 'h', 'h2o', 'pi', 'so4', 'co2',
                     'cl', 'ca2', 'cu2', 'cobalt2', 'fe2', 'fe3',
                     'k', 'mg2', 'mn2', 'mobd', 'ni2', 'zn2']
 
-def allele_analysis_differential_carbon_source(query_dir, 
-    expt_source, control_source='glc__D', ref_dir='reference/'):
+def allele_analysis(query_dir, ref_dir='reference/', rare_limit=1, low_mem=True):
+    '''
+    Same as allele_analysis_differential_carbon_source, but 
+    analyzes all genes instead of those involved in differential reactions
+    '''
+    allele_analysis_differential_carbon_source(query_dir,
+        expt_source=None, ref_dir=ref_dir, rare_limit=rare_limit, low_mem=low_mem) 
+
+
+def allele_analysis_differential_carbon_source(query_dir, expt_source, 
+    control_source='glc__D', ref_dir='reference/', rare_limit=-1, low_mem=True):
     ''' 
     Runs the following analysis for a given model 
     1) Simulate on an experimental carbon source and a control carbon source
@@ -27,7 +36,10 @@ def allele_analysis_differential_carbon_source(query_dir,
     4) Compare upstream and coding sequences of those genes to reference strains
 
     Expects there to be four files in query-dir: <strain>.faa, <strain>.json,
-    <strain>_cdhit_merged.faa.clstr, and <strain>_upstream.fna 
+    <strain>_cdhit_merged.faa.clstr, and <strain>_upstream.fna.
+
+    If expt_source=None, does not do a differential analysis but instead 
+    analyzes all genes as in steps 3/4.
     '''
 
     ''' Load files relevant to the query  '''
@@ -51,8 +63,12 @@ def allele_analysis_differential_carbon_source(query_dir,
 
     ''' Simulate differential growth '''
     model = cobra.io.load_json_model(model_file)
-    expt_diff_genes = get_differential_reactions(model, expt_source, control_source)
-    print 'Found differentially active reactions:', len(expt_diff_genes)
+    if expt_source != None: # analyzing differential genes
+        expt_diff_genes = get_differential_reactions(model, expt_source, control_source)
+        print 'Found differentially active reactions:', len(expt_diff_genes)
+    else: # analyzing all genes
+        expt_diff_genes = get_gene_mapping_for_reactions(model, map(lambda x: x.id, model.reactions))
+        print 'Analyzing all reactions:', len(expt_diff_genes)
 
     ''' Extract locus tags for relevant reference genes '''
     header_to_label = {} # map raw headers (without ">") to labels
@@ -99,51 +115,58 @@ def allele_analysis_differential_carbon_source(query_dir,
     for ref_seq_file in os.listdir(ref_seq_dir):
         if ref_seq_file[-4:] == '.faa': # expect amino acid fasta
             ref_seq_path = ref_seq_dir + ref_seq_file
-            ref_seqs.update(get_sequences_as_dict(ref_seq_path, select_fxn=filter_ref_seq))
-    ref_seqs = {k.split()[0]: v for k,v in ref_seqs.items()}
-    print 'Loaded reference sequences for differential genes:', len(ref_seqs)
+            if low_mem: # Load only relevant sequences
+                ref_seqs.update(get_sequences_as_dict(ref_seq_path, select_fxn=filter_ref_seq))
+            else: # Load all sequences, faster since no filtering
+                ref_seqs.update(get_sequences_as_dict(ref_seq_path))
+    ref_seqs = {k.split()[0]: v for k,v in ref_seqs.iteritems()}
+    print 'Loaded reference sequences for genes:', len(ref_seqs)
     
     ref_upstream_dir = (ref_dir + '/ref_upstream/').replace('//','/')
     for ref_upstream_file in os.listdir(ref_upstream_dir):
         if ref_upstream_file[-4:] == '.fna': # expect nucleotide fasta
             ref_upstream_path = ref_upstream_dir + ref_upstream_file
-            ref_upstreams.update(get_sequences_as_dict(ref_upstream_path, select_fxn=filter_ref_upstream))
-    ref_upstreams = {k.split('|')[1]: v for k,v in ref_upstreams.items()}
-    print 'Loaded reference upstream sequences for differential genes:', len(ref_upstreams)
+            if low_mem: # Load only relevant sequences
+                ref_upstreams.update(get_sequences_as_dict(ref_upstream_path, select_fxn=filter_ref_upstream))
+            else: # Load all sequences, faster since no filtering
+                ref_upstreams.update(get_sequences_as_dict(ref_upstream_path))
+    ref_upstreams = {k.split('|')[1]: v for k,v in ref_upstreams.iteritems()}
+    print 'Loaded reference upstream sequences for genes:', len(ref_upstreams)
 
     ''' Extract relevant query sequences '''
     query_seqs = get_sequences_as_dict(protein_file, select_fxn=filter_query_seq)
-    query_seqs = {k[1:]: v for k,v in query_seqs.items()}
-    print 'Loaded query sequences for differential genes:', len(query_seqs)
+    query_seqs = {k[1:]: v for k,v in query_seqs.iteritems()}
+    print 'Loaded query sequences for genes:', len(query_seqs)
 
     query_upstreams = get_sequences_as_dict(upstream_file, select_fxn=filter_query_upstream)
     format_header = lambda x: x.split('|')[0] + '|' + x.split('|')[-1]
-    query_upstreams = {format_header(k[1:]): v for k,v in query_upstreams.items()}
-    print 'Loaded query upstream sequences for differential genes:', len(query_upstreams)
+    query_upstreams = {format_header(k[1:]): v for k,v in query_upstreams.iteritems()}
+    print 'Loaded query upstream sequences for genes:', len(query_upstreams)
 
     ''' Report allele analysis of differential genes '''
     for rxnID in sorted(expt_diff_genes.keys()):
-        print '\n------------- DIFFERENTIAL REACTION:', rxnID, '-------------'
+        reported_reaction = False
         rxn_genes = expt_diff_genes[rxnID]
         for match_gene in sorted(rxn_genes.keys()):
             query_gene = rxn_genes[match_gene]
             query_seq = query_seqs[query_gene]
             query_ups = query_upstreams[query_gene][:53]
-            print '\nMATCH:', match_gene , '<->', query_gene
             
             ''' Get allele distribution of reference gene/upstream sequences '''
             co_clustered = matched_diff_queries[query_gene]
             seq_distr = {}; ups_distr = {}
             for ref_gene in co_clustered:
                 ref_tag = header_to_label[ref_gene[1:]].split('|')[1]
-                ref_seq = ref_seqs[ref_gene]
-                ref_ups = ref_upstreams[ref_tag][:53]
-                if not ref_seq in seq_distr:
-                    seq_distr[ref_seq] = 0
-                if not ref_ups in ups_distr:
-                    ups_distr[ref_ups] = 0
-                seq_distr[ref_seq] += 1
-                ups_distr[ref_ups] += 1
+                if ref_tag in ref_upstreams and ref_gene in ref_seqs:
+                    # exclude rare cases where either piece of information is missing
+                    ref_seq = ref_seqs[ref_gene]
+                    ref_ups = ref_upstreams[ref_tag][:53]
+                    if not ref_seq in seq_distr:
+                        seq_distr[ref_seq] = 0
+                    if not ref_ups in ups_distr:
+                        ups_distr[ref_ups] = 0
+                    seq_distr[ref_seq] += 1
+                    ups_distr[ref_ups] += 1
 
             ''' Add in query sequence '''
             if not query_seq in seq_distr:
@@ -154,21 +177,28 @@ def allele_analysis_differential_carbon_source(query_dir,
             ups_distr[query_ups] += 1
 
             ''' Report allele distribution '''
-            print 'Coding sequence distribution:'
-            print 'Count\tLength\tSeq'
-            for seq_allele in sorted(seq_distr.keys()):
-                count = str(seq_distr[seq_allele])
-                if seq_allele == query_seq:
-                    count += '*'
-                print count, '\t', len(seq_allele), '\t', seq_allele[:50] + '...'
+            query_seq_count = seq_distr[query_seq]
+            query_ups_count = ups_distr[query_ups]
+            if rare_limit < 0 or (query_seq_count <= rare_limit and query_ups_count <= rare_limit):
+                if not reported_reaction:
+                    print '\n------------- REACTION:', rxnID, '-------------'
+                    reported_reaction = True
+                print '\nMATCH:', match_gene , '<->', query_gene
+                print 'Coding sequence distribution:'
+                print 'Count\tLength\tSeq'
+                for seq_allele in sorted(seq_distr.keys()):
+                    count = str(seq_distr[seq_allele])
+                    if seq_allele == query_seq:
+                        count += '*'
+                    print count, '\t', len(seq_allele), '\t', seq_allele[:50] + '...'
 
-            print '\nUpstream sequence distribution:'
-            print 'Count\tSeq'
-            for ups_allele in sorted(ups_distr.keys()):
-                count = str(ups_distr[ups_allele])
-                if ups_allele == query_ups:
-                    count += '*'
-                print count, '\t', ups_allele
+                print '\nUpstream sequence distribution:'
+                print 'Count\tSeq'
+                for ups_allele in sorted(ups_distr.keys()):
+                    count = str(ups_distr[ups_allele])
+                    if ups_allele == query_ups:
+                        count += '*'
+                    print count, '\t', ups_allele
 
 
 def get_co_clustered(query_cluster_file, query_fxn):
@@ -221,20 +251,27 @@ def get_differential_reactions(model, expt_source, control_source='glc__D'):
         expt_diff_rxns = expt_fluxes.index[expt_difference]
 
         ''' Get genes for each enzyme-mediated reaction '''
-        expt_diff_genes = {}
-        for rxnID in expt_diff_rxns:
-            rxn = model.reactions.get_by_id(rxnID)
-            gpr = rxn.gene_reaction_rule + ''
-            for operator in ['(', ')', ' and ', ' or ']:
-                gpr = gpr.replace(operator, '  ')
-            rxn_genes = set(gpr.split())
-            if len(rxn_genes) > 0 and not 's0001' in rxn_genes:
-                expt_diff_genes[rxn.id] = {}
-                for geneID in rxn_genes:
-                    gene = model.genes.get_by_id(geneID)
-                    if 'match' in gene.notes:
-                        expt_diff_genes[rxn.id][geneID] = gene.notes['match']
+        expt_diff_genes = get_gene_mapping_for_reactions(model, expt_diff_rxns)
         return expt_diff_genes
+
+
+def get_gene_mapping_for_reactions(model, rxns):
+    ''' Get genes associated with a list of reactions for a reconstruction.
+        Returns a nested dictionary mapping {rxn.id: geneID: match} '''
+    genes_map = {}
+    for rxnID in rxns:
+        rxn = model.reactions.get_by_id(rxnID)
+        gpr = rxn.gene_reaction_rule + ''
+        for operator in ['(', ')', ' and ', ' or ']:
+            gpr = gpr.replace(operator, '  ')
+        rxn_genes = set(gpr.split())
+        if len(rxn_genes) > 0 and not 's0001' in rxn_genes:
+            genes_map[rxn.id] = {}
+            for geneID in rxn_genes:
+                gene = model.genes.get_by_id(geneID)
+                if 'match' in gene.notes:
+                    genes_map[rxn.id][geneID] = gene.notes['match']
+    return genes_map
 
 
 def set_model_carbon_source(model, carbon_source, limit=-10.0):

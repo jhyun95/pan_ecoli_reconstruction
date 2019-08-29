@@ -5,7 +5,7 @@ Created on Thu Aug 15 18:12:43 2019
 
 @author: jhyun95
 
-Code for downloading and constructing the E. coli reference pan-genome
+Code for downloading, constructing, and analyzing the E. coli reference pan-genome
 from the genomes and models described in doi:10.1073/pnas.1307797110.
 To setup from scratch, the functions should be run with default parameters.
 
@@ -18,8 +18,9 @@ get_upstream_sequences() # if intending on analyzing upstream DNA
 
 """
 
-from utils import process_header
-import os, urllib, subprocess
+from utils import process_header, get_sequences_as_dict, edit_distance
+import itertools, os, urllib, subprocess
+import numpy as np
 import pandas as pd
 import cobra
 
@@ -351,6 +352,104 @@ def create_non_redundant_pangenome(ref_dir='reference/', delete_redundant=False)
     df_locus = pd.DataFrame.from_dict(data=locus_map, orient='index', columns=['locus_tags'])
     df_locus = df_locus.reindex(entry_order, axis='index')
     df_locus.to_csv(locus_table_out, sep='\t')
+
+
+def check_cluster_quality(ref_dir='reference/', report_name='cluster_quality.tsv', dist_limit=50):
+    '''
+    Evaluates cluster quality after running CD-Hit on reference protein sequences.
+    Specifically, computes pairwise edit distances between unique sequences,
+    reports the maximum, and distances to the majority allele.
+    '''
+    genomes_dir = (ref_dir + '/ref_genomes/').replace('//','/')
+    cluster_file = (ref_dir + '/cdhit/').replace('//','/') + 'pan-ecoli-cdhit.faa.clstr'
+
+    ''' Load reference sequences to memory (<100MB? hopefully) 
+        TODO: Load sequences non-redundantly if memory is an issue '''
+    print 'Loading reference sequences...'
+    seqs = {}
+    for genome_file in os.listdir(genomes_dir):
+        if genome_file[-4:] == '.faa':
+            genome_path = genomes_dir + genome_file
+            genome_seqs = get_sequences_as_dict(genome_path)
+            genome_seqs = {k.split()[0]: v for k,v in genome_seqs.items()}
+            seqs.update(genome_seqs)
+
+    ''' Compute pairwise distances between sequences in each cluster 
+        If same length, will estimate as Hamming distance. Otherwise, 
+        will compute edit distance with a limit of 50. '''
+    def estimate_dist(s1,s2):
+        ''' Estimate distance between sequences via a modified Hamming distance
+            vs. edit distance '''
+        n1 = len(s1); n2 = len(s2)
+        if n1 == n2: # same length, estimate distance as hamming distance
+            dist = sum(c1!=c2 for c1,c2 in itertools.izip(seq1, seq2))
+            print dist
+            if dist > dist_limit: # hamming distance large, try again with edit dist
+                dist = edit_distance(seq1,seq2, limit=dist_limit)
+        else: # different length, compute edit distance
+            dist = edit_distance(seq1,seq2)
+        return dist
+
+
+    print '\nCluster\tMax Dist\t# Unique\t# Majority\tDist to Majority'
+    print '----------------------------------------------------------------------'
+    clusters = get_clusters(cluster_file)
+    for c, cluster in enumerate(clusters):
+        ''' Get counts per unique sequence '''
+        counts = {}
+        for feature in cluster:
+            seq = seqs[feature]
+            if not seq in counts:
+                counts[seq] = 0
+            counts[seq] += 1
+        num_majority = np.max(counts.values())
+
+        ''' Get pairwise distances between sequences '''
+        cluster_seqs = sorted(counts.keys())
+        num_unique = len(cluster_seqs)
+        distances = np.zeros((num_unique, num_unique))
+        for i in range(num_unique):
+            seq1 = cluster_seqs[i]
+            for j in range(i):
+                seq2 = cluster_seqs[j]
+                dist = estimate_dist(seq1, seq2)
+                distances[i,j] = dist
+                distances[j,i] = dist
+
+        ''' Compute maximum distance between sequence pair, and set 
+            of distances to the majority allele (for ties, pick majority 
+            allele where average distance to other alleles is minimized) '''
+        max_dist = distances.max()
+        majority_avg_distance = max_dist
+        for i in range(num_unique):
+            seq = cluster_seqs[i]
+            if counts[seq] == num_majority: # majority allele
+                avg_dist = distances[i,:].mean(axis=0)
+                if majority_avg_distance > avg_dist:
+                    majority_avg_distance = avg_dist
+                    majority_distances = distances[i,:]
+
+        ''' Save results: # unique sequences, # in majority allele, 
+            maximum pairwise distance '''
+        print c, '\t', num_unique, '\t', max_dist, '\t', num_majority, '\t', majority_distance
+
+
+def get_clusters(cluster_file):
+    ''' Extracts clusteres from a CD-Hit .clstr file. Returns a list of sets,
+        where each set contains the feature names for a cluster. '''
+    clusters = []; current_cluster = set()
+    with open(cluster_file, 'r') as f:
+        for line in f:
+            if line[0] == '>': # new cluster
+                if len(current_cluster): # if ended last cluster
+                    clusters.append(current_cluster)
+                current_cluster = set()
+            else: # reading current cluster
+                feature_name = line.split()[2].replace('...','')
+                current_cluster.add(feature_name)
+        if len(current_cluster) > 0: # final cluster
+            clusters.append(current_cluster)
+    return clusters
 
 
 def check_sequence_mapping(ref_dir='reference/'):

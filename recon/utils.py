@@ -6,6 +6,8 @@ Created on Mon Aug 27 4:27:55 2019
 @author: jhyun95
 """
 
+import numpy as np
+
 def process_header(header):
     ''' From an NCBI sequence header, extracts the raw name, annotations, and label
         of the form <strain>|<locus_tag>|<protein_id> '''
@@ -66,3 +68,41 @@ def get_sequences_as_dict(fasta_file, select_fxn=None, apply_fxn=None):
         seq = apply_fxn(seq) if apply_fxn else seq
         seqs[header] = seq
     return seqs
+
+
+def edit_distance(s1, s2, substitution=1, indel=1, limit=-1):
+    ''' 
+    Adapted from https://stackoverflow.com/questions/2460177/edit-distance-in-python 
+    Simple dynamic programming approach for computing edit distance. Optionally, can 
+    terminate the computation early if edit distance is found to be greater than some limit.
+    
+    Args:
+        s1 : str
+            First sequence in edit distance pair
+        s2 : str
+            Second sequence in edit distance pair
+        substitution : int
+            Penalty for substitution error (default 1)
+        indel : int
+            Penalty for insertion or deletion (default 1)
+        limit : int
+            If positive and edit distance exceeds limit, then
+            terminates early and returns limit (default -1)
+            
+    Returns:
+        edit_dist : int
+            Computed edit distance between the two sequences
+    '''
+    m = len(s1) + 1; n = len(s2) + 1
+    tbl = np.zeros((m,n))
+    
+    for i in np.arange(m): tbl[i,0] = i * indel
+    for j in np.arange(n): tbl[0,j] = j * indel
+    for i in np.arange(1, m):
+        for j in np.arange(1, n):
+            cost = 0 if s1[i-1] == s2[j-1] else substitution
+            tbl[i,j] = min(tbl[i, j-1] + indel, tbl[i-1, j] + indel, tbl[i-1, j-1] + cost)
+        if limit > 0 and np.min(tbl[i,:]) > limit:
+            return limit
+    edit_dist = tbl[i,j]
+    return edit_dist

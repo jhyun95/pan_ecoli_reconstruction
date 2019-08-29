@@ -18,7 +18,7 @@ BASELINE_STRAIN = ('NC000913.3','iML1515') # start with this genome/model during
 
 
 def reconstruct_with_cdhit(seq_fasta, work_dir=None, ref_dir='reference/', 
-    extra_cdhit_args=['-c', 0.8, '-aL', 0.8, '-T', 10, '-d', 0]):
+    ref_cdhit='cdhit/', extra_cdhit_args=['-c', 0.8, '-aL', 0.8, '-T', 10, '-d', 0]):
     '''
     Attempts a reconstruction with CD-Hit given a set of coding sequences 
     '''
@@ -32,7 +32,7 @@ def reconstruct_with_cdhit(seq_fasta, work_dir=None, ref_dir='reference/',
     ''' Prepare file paths and output directory '''
     time_cdhit_run = time.time()
     label_ref_file = (ref_dir + '/ref_labels.tsv').replace('//','/')
-    cdhit_ref_dir = (ref_dir + '/cdhit/').replace('//','/')
+    cdhit_ref_dir = (ref_dir + '/' + ref_cdhit).replace('//','/')
     cdhit_ref_db = cdhit_ref_dir + 'pan-ecoli-cdhit.faa'
     head, tail = os.path.split(seq_fasta)
     query_name = '.'.join(tail.split('.')[:-1])
