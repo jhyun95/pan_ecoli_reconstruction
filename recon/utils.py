@@ -6,6 +6,7 @@ Created on Mon Aug 27 4:27:55 2019
 @author: jhyun95
 """
 
+import itertools
 import numpy as np
 
 def process_header(header):
@@ -106,3 +107,16 @@ def edit_distance(s1, s2, substitution=1, indel=1, limit=-1):
             return limit
     edit_dist = tbl[i,j]
     return edit_dist
+
+
+def hamming_distance(s1, s2):
+    ''' Computes Hamming distance. If different lengths, effectively 
+        pads the shorter sequence at the end. Adapted from 
+        http://code.activestate.com/recipes/499304-hamming-distance/ '''
+    str1 = s1; str2 = s2; padding = 0; n1 = len(s1); n2 = len(s2)
+    if n1 != n2:
+        min_length = min(n1,n2)
+        str1 = str1[:min_length]
+        str2 = str2[:min_length]
+        padding = abs(n1 - n2) # increment padding distance by length diff
+    return padding + sum(c1 != c2 for c1, c2 in itertools.izip(str1, str2))
