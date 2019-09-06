@@ -7,7 +7,8 @@ Created on Mon Aug 27 2:26:01 2019
 
 Various tools for finer refinement of draft reconstruction. High level methods include:
 
-add_biolog_reactions() # reactions for arbutin, salicin, and D-tagatose metabolism
+disable_gprless_enzymatic_reactions() # removes reactions for which alignment evidence is impossible
+add_biolog_reactions() # reactions for arbutin and salicin metabolism
 allele_analysis() # compute edit distances of aligned genes to their reference clusters
 load_model_with_rare_filter() # load model without genes with large distance (from allele_analysis)
 
@@ -18,16 +19,49 @@ import os
 import cobra
 import numpy as np
 import pandas as pd
+import seaborn as sns
 
 FLUX_MINIMUM = 1e-6
 FREE_METABOLITES = ['o2', 'nh4', 'h', 'h2o', 'pi', 'so4', 'co2',
                     'cl', 'ca2', 'cu2', 'cobalt2', 'fe2', 'fe3',
                     'k', 'mg2', 'mn2', 'mobd', 'ni2', 'zn2']
 
+def disable_gprless_enzymatic_reactions(model, ignore_transport=False, ignore_reactions=[]):
+    '''
+    Disables all enzymatic reactions in the model that do not have a GPR. This is
+    all GPR-less reactions other than biomass, ATPM, and sink/demand reactions.
+    Can optionally ignore transport and/or user-specified reactions.
+
+    Parameters
+    ----------
+    model : cobra Model
+        Model to modify
+    ignore_transport : bool
+        Whether or not to ignore transport reactions (default False)
+    ignore_reactions : iterable 
+        Additional reactions to ignore when disabling reactions (default [])
+
+    Returns
+    -------    
+    model : cobra Model
+        Model with relevant GPR-less reactions disabled
+    '''
+    rxns = get_gprless_reactions(model, ignore_transport, ignore_reactions)
+    for rxnID in rxns:
+        rxn = model.reactions.get_by_id(rxnID)
+        rxn.lower_bound = 0.0
+        rxn.upper_bound = 0.0
+    return model
+
+
 def add_biolog_reactions(model):
-    ''' Adds sink reactions for arbutin and salicin, as well as other exchanges
-        for biolog-tested substrate. Specifically, adds hydroquinone and 
-        salicyl alcohol sinks for arbutin and salicin metabolism, respectively. '''
+    ''' 
+    Adds sink reactions for arbutin and salicin, as well as other exchanges
+    for biolog-tested substrates. Specifically, adds hydroquinone and 
+    salicyl alcohol sinks for arbutin and salicin metabolism, respectively,
+    and adds exchange reactions for 6 biolog substrates if the corresponding
+    metabolites are present in the model. 
+    '''
     if not 'DM_hqn_c' in model.reactions: # hydroquinone sink for arbutin
         if 'hqn_c' in model.metabolites: # check if the model supports arbutin metabolism
             met_hqn = model.metabolites.get_by_id('hqn_c')
@@ -73,9 +107,28 @@ def add_biolog_reactions(model):
 
 
 def load_model_with_rare_filter(query_dir, seq_dist_limit=30, upstream_dist_limit=10):
-    ''' Loads the reconstruction model and disables genes that are "extreme", 
-        i.e. edit distance to nearest reference gene by protein sequence or 
-        upstream sequence exceeds the specified limit '''
+    ''' 
+    Loads the reconstruction model and disables genes that are "extreme", 
+    i.e. edit distance to nearest reference gene by protein sequence or 
+    upstream sequence exceeds the specified limit. Requires allele_analysis
+    to have been run. Uses via cobra.manipulation.delete.delete_model_genes.
+
+    Parameters
+    ----------
+    query_dir : str
+        Directory with model file and allele report from allele_analysis methods
+    seq_dist_limit : int
+        Minimum protein sequence edit distance to nearest reference gene
+        to delete from model (default 30)
+    upstream_dist_limit : int
+        Minimum upstream sequence edit distance to nearest reference gene
+        to delete from model (default 10)
+
+    Returns
+    -------
+    model : cobra Model
+        Model with rare genes deleted
+    '''
     for filename in os.listdir(query_dir):
         if filename[-4:] == '.faa':
             strain = filename[:-4]
@@ -95,10 +148,27 @@ def load_model_with_rare_filter(query_dir, seq_dist_limit=30, upstream_dist_limi
 
 def get_rare_allele_genes(query_dir, seq_dist_limit=10, upstream_dist_limit=5):
     '''
-    Identifies and disables genes that are extreme alleles (edit distance
-    to nearest reference gene in terms of coding or upstream sequence is 
-    above either of the two thresholds provided). Requires allele_analysis()
+    Identifies genes that are extreme alleles (edit distance to nearest
+    reference gene in terms of protein or upstream sequence is greater than
+    or equal to either of the two thresholds provided). Requires allele_analysis()
     to have been run first.  
+
+    Parameters
+    ----------
+    query_dir : str
+        Directory with model file and allele report from allele_analysis methods
+    seq_dist_limit : int
+        Minimum protein sequence edit distance to nearest reference gene
+        to delete from model (default 10)
+    upstream_dist_limit : int
+        Minimum upstream sequence edit distance to nearest reference gene
+        to delete from model (default 5)
+
+    Returns
+    -------
+    extreme_alleles : dict
+        Dictionary with geneIDs as keys, mapped to tuples with 4 values:
+        (protein distance, upstream distance, matched gene, impacted reactions)
     '''
     for filename in os.listdir(query_dir):
         if filename[-4:] == '.faa':
@@ -130,17 +200,19 @@ def get_rare_allele_genes(query_dir, seq_dist_limit=10, upstream_dist_limit=5):
     return extreme_alleles
 
 
-def allele_analysis(query_dir, ref_dir='reference/', rare_limit=1, low_mem=True):
+def allele_analysis(query_dir, ref_dir='reference/', rare_limit=1, reactions=None, 
+    low_mem=True, write_log=False):
     '''
     Same as allele_analysis_differential_carbon_source, but 
-    analyzes all genes instead of those involved in differential reactions
+    analyzes all genes instead of those involved in differential reactions.
+    Refer to allele_analysis_differential_carbon_source() for parameters.
     '''
-    allele_analysis_differential_carbon_source(query_dir,
-        expt_source=None, ref_dir=ref_dir, rare_limit=rare_limit, low_mem=low_mem) 
+    allele_analysis_differential_carbon_source(query_dir, expt_source=reactions, 
+        ref_dir=ref_dir, rare_limit=rare_limit, low_mem=low_mem, write_log=write_log) 
 
 
-def allele_analysis_differential_carbon_source(query_dir, expt_source, 
-    control_source='glc__D', ref_dir='reference/', rare_limit=-1, low_mem=True):
+def allele_analysis_differential_carbon_source(query_dir, expt_source, control_source='glc__D', 
+    ref_dir='reference/', rare_limit=-1, low_mem=True, write_log=False):
     ''' 
     Runs the following analysis for a given model 
     1) Simulate on an experimental carbon source and a control carbon source
@@ -153,6 +225,30 @@ def allele_analysis_differential_carbon_source(query_dir, expt_source,
 
     If expt_source=None, does not do a differential analysis but instead 
     analyzes all genes as in steps 3/4.
+
+    Parameters
+    ----------
+    query_dir : str
+        Directory with model, upstream, and CD-Hit cluster files.
+    expt_source : str
+        Metabolite ID of carbon source to compare against control carbon source.
+        Alternatively, if a list of reactionIDs are provided, uses those instead of
+        attempting to identify differentially active reactions. Alternatively again,
+        if None, will examine all reactions/genes.
+    control_source : str
+        Metabolite ID of carbon source to use as baseline (default glc__D)
+    ref_dir : str
+        Directory with reference materials, refer to recon.ref (default reference/)
+    rare_limit : int
+        If positive, only reports model alleles that have been observed at most 
+        rare_limit times in the cluster file, i.e. if rare_limit = 1, only reports 
+        alleles that have never been observed among reference strains. Reports 
+        all if negative (default -1).
+    low_mem : bool
+        If True, only stores relevant sequences from reference genomes in memory by
+        filtering by header; runs notably slower (default True)
+    write_log : bool
+        If True, saves/overwrites the allele report file in query_dir (default False)
     '''
 
     ''' Load files relevant to the query  '''
@@ -170,11 +266,14 @@ def allele_analysis_differential_carbon_source(query_dir, expt_source,
             return  
 
     ''' Prepare output file '''
-    log_f = open(log_file, 'w+')
+    if write_log:
+        log_f = open(log_file, 'w+')
+
     def log_to_file(*argv):
         line = ' '.join(map(str, argv))
         print line # print to console first
-        log_f.write(line + '\n') # write to file
+        if write_log:
+            log_f.write(line + '\n') # write to file
 
     ''' Extract all co-clustered reference genes '''
     def query_fxn(feature_name):
@@ -184,15 +283,22 @@ def allele_analysis_differential_carbon_source(query_dir, expt_source,
 
     ''' Simulate differential growth '''
     model = cobra.io.load_json_model(model_file)
-    if expt_source != None: # analyzing differential genes
-        expt_diff_genes = get_differential_reactions_fva(model, expt_source, control_source)
+    if type(expt_source) == str: # analyzing differential genes WRT carbon source
+        expt_diff_genes, expt_diff_rxns = get_differential_reactions(model, expt_source, control_source)
         # for i in range(iters - 1):
         #     diff_genes = get_differential_reactions(model, expt_source, control_source)
         #     for gene in expt_diff_genes.keys(): # only records genes that are differential across multiple runs
         #         if not gene in diff_genes:
         #             print 'Marginal diff:', gene
         #             del expt_diff_genes[gene]
+        log_to_file('Found differentially active reactions:', len(expt_diff_rxns))
+        log_to_file(sorted(expt_diff_rxns))
         log_to_file('Found differentially active genes:', len(expt_diff_genes))
+        log_to_file(sorted(expt_diff_genes.keys()))
+    elif type(expt_source) in [list, set, tuple]: # pre-determined set of reactions (need a better way to check iterables)
+        expt_diff_genes = get_gene_mapping_for_reactions(model, expt_source)
+        log_to_file('Found differentially active genes:', len(expt_diff_genes))
+        log_to_file(sorted(expt_diff_genes.keys()))
     else: # analyzing all genes
         expt_diff_genes = get_gene_mapping_for_reactions(model, map(lambda x: x.id, model.reactions))
         log_to_file('Analyzing all genes:', len(expt_diff_genes))
@@ -375,6 +481,19 @@ def get_co_clustered(query_cluster_file, query_fxn):
     Given a CD-Hit cluster file, attempts to identify query sequences 
     (using query_fxn) and all non-query sequences clustered with them.
     Returns a dictionary {query_name:set(co-clustered sequence names)}
+
+    Parameters
+    ----------
+    query_cluster_file : str
+        Path to a CD-Hit cluster file, typically ending in .clstr
+    query_fxn: function
+        Function to distinguish query from non-query sequences by header. 
+        For instance, checking if ">lcl|" is at the front of the header.
+
+    Returns
+    -------
+    clusters : dict
+        Dictionary mapping query header to set(co-clustered non-query headers) 
     '''
     clusters = {}; current_cluster = set(); current_queries = set()
     with open(query_cluster_file, 'r') as f:
@@ -395,82 +514,249 @@ def get_co_clustered(query_cluster_file, query_fxn):
                 clusters[query] = current_cluster
     return clusters
 
-def get_differential_reactions_fva(model, expt_source, control_source='glc__D', opt_frac=0.95):
-    ''' For a given model, simulates growth with an experimental carbon source
-        and a reference carbon source (i.e. glucose) using FVA. Then, identifies 
-        which reactions have non-zero minimum absolute fluxes under only the 
-        experimental conditions. '''
+
+def get_growth_gprless_reactions(model, carbon_source=None, ignore_transport=False, 
+    ignore_reactions=[], opt_frac=0.95):
+    ''' 
+    For a given model, simulates growth with pFBA, examines which reactions 
+    without GPRs were used for growth, and tests their essentiality by re-simulating
+    with their deletion and deletion of all other unused GPR-less reactions.
+
+    Parameters
+    ----------
+    model : cobra Model
+        Model to examine for growth-associated GPR-less reactions.
+    carbon_source : str
+        If provided a metabolite ID, will set the model's carbon source to 
+        this metabolite. Otherwise, assesses growth as-is (default None)
+    ignore_transport : bool
+        Whether or not to exclude transport reactions (default False)
+    ignore_reactions : iterable 
+        Additional reactions to exclude (default [])
+    opt_frac : float
+        Fraction of maximum growth to accept as growth for use in pFBA (default 0.95)
+
+    Returns
+    -------
+    df_req : pd.DataFrame or None
+        Returns a DataFrame indexed by reactionID, with columns (fluxes, essential).
+        Alternative, if no growth was possible, returns None.
+    '''
+
+    if not carbon_source is None:
+        model = set_model_carbon_source(model, carbon_source)
+
+    try:
+        growth = model.slim_optimize()
+    except cobra.exceptions.Infeasible: # optimization failed (TODO: is this the correct exception)
+        return None
+
+    if growth < FLUX_MINIMUM or pd.isnull(growth): # no measurable growth
+        return None 
+    else:
+        ''' Alternate FVA approach '''
+    #     df_fva = cobra.flux_analysis.variability.flux_variability_analysis(model,
+    #         fraction_of_optimum=opt_frac)
+    #     df_fva['Required'] = np.logical_and( # less strigent
+    #         np.abs(df_fva['minimum'].values) > FLUX_MINIMUM, 
+    #         np.abs(df_fva['maximum'].values) > FLUX_MINIMUM)
+    #     df_fva_req = df_fva[df_fva['Required']].drop(columns=['Required'])
+    #     gprless_rxns = get_gprless_reactions(model, ignore_transport, ignore_reactions)
+    #     used_gprless = filter(lambda x: x in gprless_rxns, df_fva_req.index)
+    #     df_req = df_fva_req.loc[used_gprless,:]
+
+        ''' Previous pFBA approach '''
+        soln = cobra.flux_analysis.parsimonious.pfba(model, fraction_of_optimum=opt_frac)
+        used_rxns = filter(lambda x: abs(soln.fluxes.loc[x]) > FLUX_MINIMUM, soln.fluxes.index)
+        gprless_rxns = get_gprless_reactions(model, ignore_transport, ignore_reactions)
+        used_gprless = filter(lambda x: x in gprless_rxns, used_rxns)
+        df_req = soln.fluxes.loc[used_gprless]
+
+        ''' Test individual essentiallity of these gprless reactions if growth 
+            is possible when deleted (along with all other unused gprless reactions) '''
+        bounds = {}
+        for rxnID in gprless_rxns: # disable other gprless reactions to avoid compensating
+            if not rxnID in df_req.index: # preserve used gprless reactions
+                rxn = model.reactions.get_by_id(rxnID)
+                bounds[rxnID] = (rxn.lower_bound, rxn.upper_bound)
+                rxn.lower_bound = 0.0; rxn.upper_bound = 0.0
+
+        essentiality = {}
+        for rxnID in df_req.index:
+            rxn = model.reactions.get_by_id(rxnID)
+            lb = rxn.lower_bound; ub = rxn.upper_bound # store default bounds
+            rxn.lower_bound = 0.0; rxn.upper_bound = 0.0 # disable for essentiality test
+            obj = model.slim_optimize()
+            essentiality[rxnID] = obj < FLUX_MINIMUM or pd.isnull(obj)
+            rxn.lower_bound = lb; rxn.upper_bound = ub # restore default bounds
+        df_req = pd.concat([df_req, pd.Series(essentiality, name='essential')], axis=1, sort=True)
+
+        for rxnID in bounds: # restore original bounds
+            rxn = model.reactions.get_by_id(rxnID)
+            rxn.lower_bound = bounds[rxnID][0]
+            rxn.upper_bound = bounds[rxnID][1]
+
+        return df_req
+
+
+def get_gprless_reactions(model, ignore_transport=False, ignore_reactions=[]):
+    ''' 
+    Gets enzymatic reactions without GPRs by filtering out reactions with
+    either "BIOMASS", "ATPM", "EX_", "DK_", or "SK_" in the ID. Can optionally
+    exclude transport reactions by looking for "ex" or "pp" in ID end.
+
+    Parameters
+    ----------
+    model : cobra Model
+        Model to pull reactions from
+    ignore_transport : bool
+        Whether or not to exclude transport reactions (default False)
+    ignore_reactions : iterable 
+        Additional reactions to exclude (default [])
+
+    Returns
+    -------
+    gprless : list 
+        List of reaction IDs for enzymatic reactions without GPRs
+    '''
+    blacklist_terms = ('BIOMASS', 'ATPM', 'EX_', 'DM_', 'SK_')
+    gprless = []
+    for rxn in model.reactions:
+        is_blacklisted = map(lambda x: x in rxn.id, blacklist_terms)
+        is_blacklisted = reduce(lambda x,y: x or y, is_blacklisted)
+        if not is_blacklisted and not rxn.id in ignore_reactions:
+            if len(rxn.gene_reaction_rule) == 0:
+                gprless.append(rxn.id)
+    if ignore_transport: # optionally remove transport reactions
+        gprless_nontransport = filter(lambda x: not 'pp' in x[-4:] \
+            and not 'ex' in x[-3:], gprless) 
+        return gprless_nontransport
+    return gprless
+
+
+def get_differential_reactions(model, expt_source, control_source='glc__D', 
+    opt_frac=0.95, method='fva'):
+    ''' 
+    For a given model, simulates growth with an experimental carbon source
+    and a reference carbon source (i.e. glucose) using FVA or pFBA. Then, identifies 
+    which reactions have non-zero minimum absolute fluxes under only the 
+    experimental conditions. This is not comprehensive for finding core pathways,
+    as essentiality can be coupled (i.e. alternate pathways).
+
+    Parameters
+    ----------
+    model : cobra Model
+        Model to analyze
+    expt_source : str
+        Metabolite ID of carbon source to compare against control carbon source.
+    control_source : str
+        Metabolite ID of carbon source to use as baseline (default glc__D)
+    opt_frac : float
+        Fraction of maximum growth to accept as growth for use in FVA/pFBA (default 0.95)
+    method : str
+        Whether or not to use pFBA or FVA to estimate required reactions,
+        must be 'fva' or 'pfba' (default 'fva')
+
+    Returns
+    -------
+    expt_diff_genes : dict
+        Dictionary mapping IDs of differentially active genes to 2-tuples containing
+        the matched gene and a list of all reactions that involve each gene.
+    expt_diff_rxns : list
+        List of IDs for differentially active reactions
+    '''
     model = set_model_carbon_source(model, expt_source)
     expt_growth = model.slim_optimize()
     if expt_growth < FLUX_MINIMUM: # no growth under experimental conditions
         return None
     else: # growth under experimental conditions
-        ''' Compute FVA under both conditions '''
-        df_expt_fva = cobra.flux_analysis.variability.flux_variability_analysis(model, 
-            fraction_of_optimum=opt_frac)
-        model = set_model_carbon_source(model, control_source)
-        df_ctrl_fva = cobra.flux_analysis.variability.flux_variability_analysis(model, 
-            fraction_of_optimum=opt_frac)
-        
-        ''' Get obligate reactions '''
-        df_expt_fva['Required'] = np.logical_or(
-            df_expt_fva['minimum'].values > FLUX_MINIMUM, 
-            df_expt_fva['maximum'].values < -FLUX_MINIMUM)
-        df_ctrl_fva['Required'] = np.logical_or(
-            df_ctrl_fva['minimum'].values > FLUX_MINIMUM, 
-            df_ctrl_fva['maximum'].values < -FLUX_MINIMUM)
-        df_expt_req = df_expt_fva[df_expt_fva['Required']]
-        df_ctrl_req = df_ctrl_fva[df_ctrl_fva['Required']]
-        
-        ''' Get differential reactions '''
-        expt_req_rxns = df_expt_req.index.tolist()
-        ctrl_req_rxns = df_ctrl_req.index.tolist()
-        expt_diff_rxns = filter(lambda x: not x in ctrl_req_rxns, expt_req_rxns)
-        expt_diff_genes = get_gene_mapping_for_reactions(model, expt_diff_rxns)
-        return expt_diff_genes
+        if method == 'pfba': # pFBA strategy
+            ''' Repeat under control conditions '''
+            model = set_model_carbon_source(model, control_source)
+            ctrl_soln = cobra.flux_analysis.parsimonious.pfba(model, fraction_of_optimum=opt_frac)
+            ctrl_growth = ctrl_soln.objective_value
+            ctrl_fluxes = ctrl_soln.fluxes
 
+            ''' Identify reactions active in experimental, inactive in control '''
+            expt_active = np.abs(expt_fluxes.values) > FLUX_MINIMUM
+            ctrl_inactive = np.abs(ctrl_fluxes.values) < FLUX_MINIMUM
+            expt_difference = np.logical_and(expt_active, ctrl_inactive)
+            expt_diff_rxns = expt_fluxes.index[expt_difference]
 
-def get_differential_reactions(model, expt_source, control_source='glc__D'):
-    ''' For a given model, simulates growth with an experimental carbon source
-        and a reference carbon source (i.e. glucose) using pFBA. Fluxes that
-        are active only under the experimental carbon source are reported,
-        along with all associated genes. '''
-    model = set_model_carbon_source(model, expt_source)
-    expt_soln = cobra.flux_analysis.parsimonious.pfba(model)
-    expt_growth = expt_soln.objective_value
-    expt_fluxes = expt_soln.fluxes
+            ''' Get genes for each enzyme-mediated reaction '''
+            expt_diff_genes = get_gene_mapping_for_reactions(model, expt_diff_rxns)
+            return expt_diff_genes, expt_diff_rxns
 
-    if expt_growth < FLUX_MINIMUM: # no growth under experimental conditions
-        return None
-    else: # growth under experimental conditions
-        ''' Repeat under control conditions '''
-        model = set_model_carbon_source(model, control_source)
-        ctrl_soln = cobra.flux_analysis.parsimonious.pfba(model)
-        ctrl_growth = ctrl_soln.objective_value
-        ctrl_fluxes = ctrl_soln.fluxes
+        elif method == 'fva': # FVA strategy
+            ''' Compute FVA under both conditions '''
+            df_expt_fva = cobra.flux_analysis.variability.flux_variability_analysis(model, 
+                fraction_of_optimum=opt_frac)
+            model = set_model_carbon_source(model, control_source)
+            df_ctrl_fva = cobra.flux_analysis.variability.flux_variability_analysis(model, 
+                fraction_of_optimum=opt_frac)
+            
+            ''' Get obligate reactions: This approach is conservative, will only find 
+                reactions that NEED to be used, and in cases where alternate pathways
+                are available, both will be missed (swapping = neither are essential) '''
+            # df_expt_fva['Required'] = np.logical_or(
+            #     df_expt_fva['minimum'].values > FLUX_MINIMUM, 
+            #     df_expt_fva['maximum'].values < -FLUX_MINIMUM)
+            # df_ctrl_fva['Required'] = np.logical_or(
+            #     df_ctrl_fva['minimum'].values > FLUX_MINIMUM, 
+            #     df_ctrl_fva['maximum'].values < -FLUX_MINIMUM)
+            # df_expt_req = df_expt_fva[df_expt_fva['Required']]
+            # df_ctrl_req = df_ctrl_fva[df_ctrl_fva['Required']]
+            # expt_req_rxns = df_expt_req.index.tolist()
+            # ctrl_req_rxns = df_ctrl_req.index.tolist()
+            # expt_diff_rxns = filter(lambda x: not x in ctrl_req_rxns, expt_req_rxns)
 
-        ''' Identify reactions active in experimental, inactive in control '''
-        expt_active = np.abs(expt_fluxes.values) > FLUX_MINIMUM
-        ctrl_inactive = np.abs(ctrl_fluxes.values) < FLUX_MINIMUM
-        expt_difference = np.logical_and(expt_active, ctrl_inactive)
-        expt_diff_rxns = expt_fluxes.index[expt_difference]
-
-        ''' Get genes for each enzyme-mediated reaction '''
-        expt_diff_genes = get_gene_mapping_for_reactions(model, expt_diff_rxns)
-        return expt_diff_genes
+            ''' Get usable reactions: This approach is less conservative, will 
+                find any reactions used in one the experimental condition that
+                cannot be used in the control condition '''
+            df_expt_fva['Usable'] = np.logical_or(
+                np.abs(df_expt_fva['minimum'].values) > FLUX_MINIMUM, 
+                np.abs(df_expt_fva['maximum'].values) > FLUX_MINIMUM)
+            df_ctrl_fva['Usable'] = np.logical_or(
+                np.abs(df_ctrl_fva['minimum'].values) > FLUX_MINIMUM, 
+                np.abs(df_ctrl_fva['maximum'].values) > FLUX_MINIMUM)
+            df_expt_use = df_expt_fva[df_expt_fva['Usable']]
+            df_ctrl_use = df_ctrl_fva[df_ctrl_fva['Usable']]
+            expt_use_rxns = df_expt_use.index.tolist()
+            ctrl_use_rxns = df_ctrl_use.index.tolist()
+            expt_diff_rxns = filter(lambda x: not x in ctrl_use_rxns, expt_use_rxns)
+            
+            ''' Get differential reactions '''
+            expt_diff_genes = get_gene_mapping_for_reactions(model, expt_diff_rxns)
+            return expt_diff_genes, expt_diff_rxns
 
 
 def get_gene_mapping_for_reactions(model, rxns):
-    ''' Get genes associated with a list of reactions for a reconstruction.
-        Returns a nested dictionary mapping {geneID: (match, affected rxns)} '''
+    ''' 
+    Get genes associated with a list of reactions for a reconstruction.
+    Returns a dictionary mapping {geneID: (match, affected rxns)} 
+
+    Parameters
+    ----------
+    model : cobra Model
+        Model from which to identify genes
+    rxns : iterable
+        List of reaction IDs
+
+    Returns
+    -------
+    genes_map : dict
+        Dictionary mapping IDs of differentially active genes to 2-tuples containing
+        the matched gene and a list of all reactions that involve each gene.
+    '''
     genes_of_interest = set()
     for rxnID in rxns: # first get all genes involved in these reactions 
-        rxn = model.reactions.get_by_id(rxnID)
-        gpr = rxn.gene_reaction_rule + ''
-        for operator in ['(', ')', ' and ', ' or ']:
-            gpr = gpr.replace(operator, '  ')
-        rxn_genes = set(gpr.split())
-        genes_of_interest = genes_of_interest.union(rxn_genes)
+        if rxnID in model.reactions:
+            rxn = model.reactions.get_by_id(rxnID)
+            gpr = rxn.gene_reaction_rule + ''
+            for operator in ['(', ')', ' and ', ' or ']:
+                gpr = gpr.replace(operator, '  ')
+            rxn_genes = set(gpr.split())
+            genes_of_interest = genes_of_interest.union(rxn_genes)
 
     rxn_to_genes = {}
     for rxn in model.reactions: # next, map each reaction to its genes
@@ -495,9 +781,22 @@ def get_gene_mapping_for_reactions(model, rxns):
 
 
 def set_model_carbon_source(model, carbon_source, limit=-10.0):
-    ''' For a given model, disables all input exchanges, then enables 
-        free exchange of all metabolites in FREE_METABOLITES, and finally
-        enables uptakes of the specific carbon source up to a specified limit '''
+    ''' 
+    For a given model, disables all input exchanges, then enables 
+    free exchange of all metabolites in FREE_METABOLITES, and finally
+    enables uptakes of the specific carbon source up to a specified limit 
+
+    Parameters
+    ----------
+    model : cobra Model
+        Model to modify reactions bounds
+    carbon_source : str
+        Metabolite ID for desired carbon source
+    limit : float
+        Maximum exchange rate for carbon source, specifically the desired
+        lower bound for the corresponding exchange reaction, use
+        negative values to allow uptake (default -10.0)
+    '''
     for reaction in model.reactions.query('EX_'): # get all exchanges
         if reaction.id.split('_')[1] in FREE_METABOLITES:
             reaction.lower_bound = -1000.0
@@ -509,3 +808,31 @@ def set_model_carbon_source(model, carbon_source, limit=-10.0):
     exchange = model.reactions.get_by_id(exchangeID)
     exchange.lower_bound = limit
     return model
+
+
+def compare_prediction_vs_truth(df_predict, df_truth, ax=None):
+    ''' 
+    Compare predictions to truth, provided as two DataFrames
+    with the same index and columns and only binary values.
+    Assumes index and columns are correctly aligned
+    '''
+    pred = df_predict.values
+    truth = df_truth.values
+    TPs = np.logical_and(pred, truth)
+    FPs = np.logical_and(pred, np.logical_not(truth))
+    FNs = np.logical_and(np.logical_not(pred), truth)
+    TNs = np.logical_and(np.logical_not(pred), np.logical_not(truth))
+    n_TPs = TPs.sum(); n_FPs = FPs.sum()
+    n_FNs = FNs.sum(); n_TNs = TNs.sum()
+
+    print 'TPs:', n_TPs
+    print 'FPs:', n_FPs
+    print 'FNs:', n_FNs
+    print 'TNs:', n_TNs
+
+    predict_types = -1.0*TPs - 0.33*TNs + 0.33*FPs + 1.0*FNs
+    df_eval = pd.DataFrame(index=df_predict.index, columns=df_predict.columns, data=predict_types)
+    if ax is None:
+        sns.heatmap(df_eval, cmap='coolwarm')
+    else:
+        sns.heatmap(df_eval, cmap='coolwarm', ax=ax)
