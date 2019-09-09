@@ -25,6 +25,8 @@ FLUX_MINIMUM = 1e-6
 FREE_METABOLITES = ['o2', 'nh4', 'h', 'h2o', 'pi', 'so4', 'co2',
                     'cl', 'ca2', 'cu2', 'cobalt2', 'fe2', 'fe3',
                     'k', 'mg2', 'mn2', 'mobd', 'ni2', 'zn2']
+NONENZYMATIC_TERMSs = ('BIOMASS', 'ATPM', 'EX_', 'DM_', 'SK_')
+
 
 def disable_gprless_enzymatic_reactions(model, ignore_transport=False, ignore_reactions=[]):
     '''
@@ -622,8 +624,8 @@ def get_gprless_reactions(model, ignore_transport=False, ignore_reactions=[]):
     blacklist_terms = ('BIOMASS', 'ATPM', 'EX_', 'DM_', 'SK_')
     gprless = []
     for rxn in model.reactions:
-        is_blacklisted = map(lambda x: x in rxn.id, blacklist_terms)
-        is_blacklisted = reduce(lambda x,y: x or y, is_blacklisted)
+        is_nonenzymatic = map(lambda x: x in rxn.id, NONENZYMATIC_TERMS)
+        is_nonenzymatic = reduce(lambda x,y: x or y, is_nonenzymatic)
         if not is_blacklisted and not rxn.id in ignore_reactions:
             if len(rxn.gene_reaction_rule) == 0:
                 gprless.append(rxn.id)

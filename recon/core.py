@@ -15,10 +15,12 @@ import cobra
 BLACKLIST_PROTEINS = ['AYC08180.1','YP_009518752.1'] # ignore alignments to these proteins
 BASELINE_GENES = ['s0001'] # genes to include in all models
 BASELINE_STRAIN = ('NC000913.3','iML1515') # start with this genome/model during reconstruction
+NONENZYMATIC_TERMS = ('BIOMASS', 'ATPM', 'EX_', 'DM_', 'SK_')
 
 
 def reconstruct_with_cdhit(seq_fasta, work_dir=None, ref_dir='reference/', 
-    ref_cdhit='cdhit/', extra_cdhit_args=['-c', 0.8, '-aL', 0.8, '-T', 10, '-d', 0]):
+    ref_cdhit='cdhit/', extra_cdhit_args=['-c', 0.8, '-aL', 0.8, '-T', 10, '-d', 0],
+    accept_gprless=['DNMPPA']):
     '''
     Attempts a reconstruction with CD-Hit given a set of coding sequences 
     '''
@@ -133,6 +135,16 @@ def reconstruct_with_cdhit(seq_fasta, work_dir=None, ref_dir='reference/',
     for gene in model.genes: # add note about matched gene
         if gene.id in reference_to_query:
             gene.notes['match'] = reference_to_query[gene.id]
+    gprless_enzymatic = [] # enzymatic reactions without GPRs to remove
+    for reaction in model.reactions:
+        if len(reaction.gene_reaction_rule) == 0:
+            rxnID = reaction.id
+            is_nonenzymatic = map(lambda x: x in rxnID, NONENZYMATIC_TERMS)
+            is_nonenzymatic = reduce(lambda x,y: x or y, is_nonenzymatic)
+            if (not is_nonenzymatic) and (not rxnID in accept_gprless): # if enzymatic but not GPR, remove
+                gprless_enzymatic.append(rxnID)
+    if len(gprless_enzymatic) > 0:
+        model.remove_reactions(gprless_enzymatic)
     print '\tGenes:', len(model.genes)
     print '\tReactions:', len(model.reactions)
     print '\tMetabolites:', len(model.metabolites)
@@ -175,8 +187,14 @@ def reconstruct_with_cdhit(seq_fasta, work_dir=None, ref_dir='reference/',
                 if not_present and not_biomass: 
                     possible_reactions += 1
                     gpr = reaction['gene_reaction_rule']
-                    if len(gpr) == 0: # no GPR, spontaneous
-                        gpr_state = True
+                    if len(gpr) == 0: # if no GPR, only allow non-enzymatic reactions
+                        if accept_gprless == True: # special option for taking all gprless
+                            gpr_state = True
+                        else: # otherwise, only allow non-enzymatic reactions without GPRs
+                            rxnID = reaction['id']
+                            is_nonenzymatic = map(lambda x: x in rxnID, NONENZYMATIC_TERMS)
+                            is_nonenzymatic = reduce(lambda x,y: x or y, is_nonenzymatic)
+                            gpr_state = is_nonenzymatic or (rxnID in accept_gprless)
                     else: # yes GPR, attempt to evaluate statement
                         ''' Format GPR for numexpr and extract relevant genes '''
                         gpr_eval = gpr.replace(' or ',' | ').replace(' and ',' & ')
