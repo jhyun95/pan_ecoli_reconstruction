@@ -10,3 +10,4 @@ import utils
 import ref
 import core
 import refine
+import pangenome
